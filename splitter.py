@@ -83,7 +83,6 @@ def load_recursive_policy(recursive_path, verbose=False):
 def get_content_type(path):
     # Check if the path is a local file
     if os.path.isfile(path):
-        print(f"Path {path} is a file")
         # Determine content type based on file content
         content_type, _ = mimetypes.guess_type(path)
         if content_type:
@@ -92,10 +91,7 @@ def get_content_type(path):
     # Check if the path is a remote URL
     parsed_url = urlparse(path)
     if parsed_url.scheme in ('http', 'https'):
-        #print(f"Path {path} is a url")
-        # Strip GET parameters
         stripped_url = parsed_url._replace(query='').geturl()
-        #print(f"Stripped url = {stripped_url}")
         try:
             response = requests.head(path, allow_redirects=True)
             if response.status_code == 200:
@@ -109,29 +105,6 @@ def get_image_type(path):
     content_type = get_content_type(path)
     types = content_type.split('/')
     return types[-1]
-
-# Get the true file type of the image
-#def get_image_format(image_path, verbose=False):
-#    try:
-#        if re.match(r'https?://', image_path):
-#            if verbose:
-#                print(f"### HERE (get_image_format) ###")
-#            parsed_url = urlparse(url)
-#            filename = parsed_url.path.split('?')[0]
-#            filename = filename.lstrip('/')
-#            ext = filename.split('.')[-1]
-#            return ext
-#        else:
-#            print(f"### HERE ###")
-#        with Image.open(image_path) as img:
-#            f = img.format.lower()  # e.g., 'png', 'jpeg', etc.
-#            if verbose:
-#                print(f"{image_path} detected format: {format}")
-#            return f
-#    except Exception as e:
-#        if verbose:
-#            print(f"Error opening {image_path}: {e}")
-#        return None
 
 def extract_filename_from_url(url):
     # Check if the URL has a protocol; if not, assume 'http'
@@ -191,22 +164,15 @@ def acquire_image(image_path, verbose=False, image_types=None):
     try:
         # Try to open the image locally
         img = Image.open(image_path)
-        if verbose:
-            print(f"Local open passed for {image_path}")
         return img
 
     except Exception as local_e:
-        if verbose:
-            print(f"Local open failed for {image_path}: {local_e}")
-
         # Try to open the image remotely if the local attempt fails
         if check_remote_file_content_type(image_path, image_types, verbose):
             try:
                 response = requests.get(image_path, stream=True)
                 response.raise_for_status()  # Raise an error for bad responses
                 img = Image.open(response.raw)
-                if verbose:
-                    print(f"Remote open passed for {image_path}")
                 return img
 
             except Exception as remote_e:
@@ -230,8 +196,6 @@ def split_image(image_path, output_dir, output_format, verbose=False, image_type
     img = acquire_image(image_path, verbose, image_types)
     
     if img is None:
-        if verbose:
-            print(f"Image {image_path} is 'None'")
         return False  # Image acquisition failed
 
     width, height = img.size
@@ -254,31 +218,23 @@ def split_image(image_path, output_dir, output_format, verbose=False, image_type
     #image_format = output_format if output_format != 'default' else get_image_format(image_path)
     if not output_format or output_format == 'default':
         output_format = get_image_type(image_path)
-        if not output_format and verbose:
-            print(f"Found it?")
-    if verbose:
-        print(f"Image format: {output_format}")
+        if not output_format:
+            return False
     if not output_format:
         if verbose:
             print(f"Skipping {image_path}: invalid image format")
         return False  # Skip if format isn't valid
-    elif verbose:
-        print(f"Image {image_path} has valid image format")
 
     base_name = os.path.splitext(os.path.basename(image_path))[0]
     #base_name = extract_filename_from_url(base_name)
     for i, quadrant in enumerate(quadrants):
         try:
-            print(f"Output dir = {output_dir}")
             output_file = os.path.join(output_dir, f"{base_name}_{i+1}.{output_format}")
 
             if not os.path.exists(output_file):
                 quadrant.save(output_file, output_format.upper())
                 if verbose:
-                    print(f"Saved: {output_file}")
-            else:
-                if verbose:
-                    print(f"Skipping {output_file}: already exists")
+                    print(f"{output_file}")
         except Exception as e:
             if verbose:
                 print(f"Error occurred while processing {output_file}: {e}")
@@ -303,13 +259,9 @@ def check_remote_file_content_type(url, image_types, verbose=False):
 
         # Get the content type from the headers
         content_type = response.headers.get('content-type', '')
-        if verbose:
-            print(f"Content type for {url}: {content_type}")
 
         # Check if the content type matches your supported extensions
         if any(content_type.lower().startswith(ext) for ext in supported_extensions):
-            if verbose:
-                print(f"{url} is supported.")
             return True  # Supported content type
         else:
             if verbose:
@@ -339,8 +291,6 @@ def find_qualified_files(input_paths, supported_extensions, recursive, output_di
             ext = os.path.splitext(input_path)[1].lower()
             if ext in supported_extensions:
                 qualified_files.append(input_path)
-                if verbose:
-                    print(f"Found file: {input_path}")
         elif os.path.isdir(input_path):
             for root, _, files in os.walk(input_path):
                 for file in files:
@@ -348,8 +298,6 @@ def find_qualified_files(input_paths, supported_extensions, recursive, output_di
                     ext = os.path.splitext(file)[1].lower()
                     if ext in supported_extensions:
                         qualified_files.append(file_path)
-                        if verbose:
-                            print(f"Found file: {file_path}")
                 if not recursive:
                     break  # Stop searching after the first directory
         elif check_remote_file_content_type(input_path, supported_extensions, verbose):
@@ -384,12 +332,10 @@ def main():
 
     # Find qualified files
     qualified_files = find_qualified_files(args.inputs, supported_extensions, recursive, args.output, args.verbose)
-    print(f"Qualified files: {len(qualified_files)}")
 
     # Split qualified images
     for image_path in qualified_files:
         split_image(image_path, args.output, output_format, args.verbose, supported_extensions)
-        print(f"Qualified file: {image_path}")
 
 if __name__ == "__main__":
     main()
