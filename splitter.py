@@ -5,6 +5,7 @@ import argparse
 import requests
 import re
 from urllib.parse import urlparse
+import mimetypes
 
 def verify_or_create_directory(path, verbose=False):
     try:
@@ -23,7 +24,6 @@ def ensure_config_files(config_dir, verbose=False):
     verify_or_create_directory(config_dir, verbose)
     config_files = {
         'extensions.txt': 'png\njpg\njpeg\nwebp',
-        'output_location.txt': 'default',
         'output_format.txt': 'default',
         'recursive.txt': 'true'
     }
@@ -68,13 +68,8 @@ def load_recursive_policy(recursive_path, verbose=False):
         with open(recursive_path, 'r') as f:
             value = f.read().strip().lower()
             if value in ['yes', 'true']:
-                if verbose:
-                    print("Running in recursive mode")
                 return True
-            else:
-                if verbose:
-                    print("Running in non-recursive mode")
-                return False
+            return False
     except FileNotFoundError:
         if verbose:
             print(f"Error: Recursive config file not found at {recursive_path}")
@@ -98,7 +93,6 @@ def get_content_type(path):
                 return response.headers.get('Content-Type')
         except requests.RequestException:
             return None
-    
     return None
 
 def get_image_type(path):
@@ -286,56 +280,92 @@ def find_qualified_files(input_paths, supported_extensions, recursive, output_di
     :return: List of qualified files.
     """
     qualified_files = []
+        #if os.path.samefile(image_path, config_dir):
     for input_path in input_paths:
         if os.path.isfile(input_path):
             ext = os.path.splitext(input_path)[1].lower()
+            ext = ext[1:]
             if ext in supported_extensions:
                 qualified_files.append(input_path)
-        elif os.path.isdir(input_path):
-            for root, _, files in os.walk(input_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    ext = os.path.splitext(file)[1].lower()
-                    if ext in supported_extensions:
+        elif os.path.isdir(input_path) and not os.path.samefile(input_path, output_dir):
+            if recursive:
+                for root, _, files in os.walk(input_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        ext = os.path.splitext(file)[-1].lower()
+                        if ext.startswith('.'):
+                            ext = ext[1:]
+                        if ext in supported_extensions:
+                            qualified_files.append(file_path)
+            else:
+                for file in os.listdir(input_path):
+                    file_path = os.path.join(input_path, file)
+                    if os.path.isfile(file_path):
                         qualified_files.append(file_path)
-                if not recursive:
-                    break  # Stop searching after the first directory
         elif check_remote_file_content_type(input_path, supported_extensions, verbose):
             qualified_files.append(input_path)
     return qualified_files
 
-def main():
-    # Set up argument parser
-    parser = argparse.ArgumentParser(description='Split 2x2 image grids into quadrants.')
-    parser.add_argument('inputs', nargs='+', help='Input file paths or URLs.')
-    parser.add_argument('-o', '--output', default='outputs', help='Output directory (default: outputs).')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output.')
-    
-    args = parser.parse_args()
+def usage(msg, args=[]):
+    print(f"TODO usage (given '{msg}', {args})")
 
-    # Set up directories and files
+
+def collision(x, y):
+    if os.path.exists(x) and os.path.exists(y):
+        if os.path.samefile(x, y):
+            return True
+    elif x == y:
+        return True
+    return False
+
+def main():
+    # Set up directories, files, and defaults
+    args = sys.argv[1:]
+    verbose = False
+    inputs = []
+    output = 'outputs'
     config_dir = 'config'
-    ensure_config_files(config_dir, args.verbose)
+
+    while '-v' in args:
+        args.remove('-v')
+        verbose = True
+
+    if '-o' in args:
+        ind = args.index('-o')
+        if ind == len(args):
+            usage("A directory must follow '-o'", args)
+            sys.exit(1)
+        output = args[ind+1]
+        # TODO this line will fail on some conditions, rewrite
+        args = [x for x in args if x != '-o' and not collision(x, output)]
+    else:
+        output = args[0]
+        # TODO rewrite this one too
+        args = [x for x in args if not collision(x, output)]
+    if verbose:
+        print(f"Output path set to {output}; inputs: {args}")
+
+    ensure_config_files(config_dir, verbose)
 
     extensions_path = os.path.join(config_dir, 'extensions.txt')
     output_format_path = os.path.join(config_dir, 'output_format.txt')
     recursive_path = os.path.join(config_dir, 'recursive.txt')
 
-    supported_extensions = load_supported_extensions(extensions_path, args.verbose)
-    output_format = load_output_format(output_format_path, args.verbose)
-    recursive = load_recursive_policy(recursive_path, args.verbose)
+    supported_extensions = load_supported_extensions(extensions_path, verbose)
+    output_format = load_output_format(output_format_path, verbose)
+    recursive = load_recursive_policy(recursive_path, verbose)
 
     # Verify output directory
-    if not verify_or_create_directory(args.output, args.verbose):
+    if not verify_or_create_directory(output, verbose):
         print("Error: Output directory is not valid. Exiting.")
         sys.exit(1)
 
     # Find qualified files
-    qualified_files = find_qualified_files(args.inputs, supported_extensions, recursive, args.output, args.verbose)
+    qualified_files = find_qualified_files(args, supported_extensions, recursive, output, verbose)
 
     # Split qualified images
     for image_path in qualified_files:
-        split_image(image_path, args.output, output_format, args.verbose, supported_extensions)
+        split_image(image_path, output, output_format, verbose, supported_extensions)
 
 if __name__ == "__main__":
     main()
